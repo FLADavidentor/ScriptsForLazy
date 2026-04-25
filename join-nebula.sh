@@ -9,6 +9,10 @@ NEBULA_PORT="4242"
 read -rp "node name: " NODE
 NODE="$(echo "$NODE" | tr -cd 'a-zA-Z0-9_-')"
 
+if [ -z "$NODE" ]; then
+  NODE="$(hostname | tr -cd 'a-zA-Z0-9_-')"
+fi
+
 if [ -f /etc/machine-id ]; then
   MACHINE_ID="$(cat /etc/machine-id)"
 else
@@ -19,11 +23,6 @@ TMP="/tmp/nebula-join-$NODE"
 rm -rf "$TMP"
 mkdir -p "$TMP"
 
-echo "[1] install nebula"
-cd /tmp
-curl -L https://github.com/slackhq/nebula/releases/latest/download/nebula-linux-amd64.tar.gz | tar xz
-sudo install nebula nebula-cert /usr/local/bin/
-
 echo "[0] clean old nebula"
 sudo systemctl stop nebula 2>/dev/null || true
 sudo systemctl disable nebula 2>/dev/null || true
@@ -31,6 +30,11 @@ sudo rm -f /etc/systemd/system/nebula.service
 sudo systemctl daemon-reload 2>/dev/null || true
 sudo rm -rf /etc/nebula
 sudo ip link delete nebula1 2>/dev/null || true
+
+echo "[1] install nebula"
+cd /tmp
+curl -L https://github.com/slackhq/nebula/releases/latest/download/nebula-linux-amd64.tar.gz | tar xz
+sudo install nebula nebula-cert /usr/local/bin/
 
 echo "[2] ask VPS for cave passport"
 ssh -o StrictHostKeyChecking=accept-new "${VPS_USER}@${VPS_IP}" \
@@ -53,7 +57,7 @@ sudo chown root:root /etc/nebula/*
 sudo chmod 644 /etc/nebula/ca.crt "/etc/nebula/${REAL_NODE}.crt"
 sudo chmod 600 "/etc/nebula/${REAL_NODE}.key"
 
-echo "[4] write config"
+echo "[4] write nebula config"
 sudo tee /etc/nebula/config.yml >/dev/null <<EOF
 pki:
   ca: /etc/nebula/ca.crt
@@ -97,6 +101,19 @@ firewall:
         - nodes
 EOF
 
+echo "[4.5] setup .nebula DNS"
+if command -v resolvectl >/dev/null && command -v systemctl >/dev/null && [ "$(ps -p 1 -o comm=)" = "systemd" ]; then
+  sudo mkdir -p /etc/systemd/resolved.conf.d
+  sudo tee /etc/systemd/resolved.conf.d/nebula.conf >/dev/null <<EOF
+[Resolve]
+DNS=${LIGHTHOUSE_IP}
+Domains=~nebula
+EOF
+  sudo systemctl restart systemd-resolved 2>/dev/null || true
+else
+  echo "skip DNS cave. no systemd-resolved."
+fi
+
 echo "[5] start forever"
 if command -v systemctl >/dev/null && [ "$(ps -p 1 -o comm=)" = "systemd" ]; then
   sudo tee /etc/systemd/system/nebula.service >/dev/null <<EOF
@@ -124,4 +141,5 @@ fi
 echo "done."
 echo "name: $REAL_NODE"
 echo "ip: $NODE_IP"
-echo "test: ping $LIGHTHOUSE_IP"
+echo "test ip: ping $LIGHTHOUSE_IP"
+echo "test dns: ping ${REAL_NODE}.nebula"
