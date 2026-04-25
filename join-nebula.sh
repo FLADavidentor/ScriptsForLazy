@@ -23,7 +23,13 @@ TMP="/tmp/nebula-join-$NODE"
 rm -rf "$TMP"
 mkdir -p "$TMP"
 
-echo "[0] clean old nebula"
+echo "[0] install nebula"
+cd /tmp
+curl -fL https://github.com/slackhq/nebula/releases/latest/download/nebula-linux-amd64.tar.gz -o /tmp/nebula.tar.gz
+tar xzf /tmp/nebula.tar.gz -C /tmp
+sudo install nebula nebula-cert /usr/local/bin/
+
+echo "[1] clean old nebula"
 sudo systemctl stop nebula 2>/dev/null || true
 sudo systemctl disable nebula 2>/dev/null || true
 sudo rm -f /etc/systemd/system/nebula.service
@@ -31,10 +37,7 @@ sudo systemctl daemon-reload 2>/dev/null || true
 sudo rm -rf /etc/nebula
 sudo ip link delete nebula1 2>/dev/null || true
 
-echo "[1] install nebula"
-cd /tmp
-curl -L https://github.com/slackhq/nebula/releases/latest/download/nebula-linux-amd64.tar.gz | tar xz
-sudo install nebula nebula-cert /usr/local/bin/
+
 
 echo "[2] ask VPS for cave passport"
 ssh -o StrictHostKeyChecking=accept-new "${VPS_USER}@${VPS_IP}" \
@@ -101,19 +104,6 @@ firewall:
         - nodes
 EOF
 
-echo "[4.5] setup .nebula DNS"
-if command -v resolvectl >/dev/null && command -v systemctl >/dev/null && [ "$(ps -p 1 -o comm=)" = "systemd" ]; then
-  sudo mkdir -p /etc/systemd/resolved.conf.d
-  sudo tee /etc/systemd/resolved.conf.d/nebula.conf >/dev/null <<EOF
-[Resolve]
-DNS=${LIGHTHOUSE_IP}
-Domains=~nebula
-EOF
-  sudo systemctl restart systemd-resolved 2>/dev/null || true
-else
-  echo "skip DNS cave. no systemd-resolved."
-fi
-
 echo "[5] start forever"
 if command -v systemctl >/dev/null && [ "$(ps -p 1 -o comm=)" = "systemd" ]; then
   sudo tee /etc/systemd/system/nebula.service >/dev/null <<EOF
@@ -133,6 +123,25 @@ EOF
 
   sudo systemctl daemon-reload
   sudo systemctl enable --now nebula
+
+  echo "[6] bind .nebula DNS to nebula1"
+  for i in {1..10}; do
+    if ip link show nebula1 >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  sudo resolvectl dns nebula1 "${LIGHTHOUSE_IP}" 2>/dev/null || true
+  sudo resolvectl domain nebula1 "~nebula" 2>/dev/null || true
+  echo "[6.5] fix resolv.conf safely"
+  if [ -e /run/systemd/resolve/stub-resolv.conf ]; then
+    if [ ! -L /etc/resolv.conf ] || [ "$(readlink /etc/resolv.conf || true)" != "/run/systemd/resolve/stub-resolv.conf" ]; then
+      sudo cp /etc/resolv.conf "/etc/resolv.conf.backup.$(date +%s)" 2>/dev/null || true
+      sudo rm -f /etc/resolv.conf
+      sudo ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+    fi
+  fi
 else
   echo "no systemd. run:"
   echo "sudo nebula -config /etc/nebula/config.yml"
