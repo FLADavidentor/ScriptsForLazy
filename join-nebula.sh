@@ -132,19 +132,6 @@ EOF
     sleep 1
   done
 
-  sudo resolvectl dns nebula1 "${LIGHTHOUSE_IP}" 2>/dev/null || true
-  sudo resolvectl domain nebula1 "~nebula" 2>/dev/null || true
-  echo "[6.5] fix resolv.conf safely"
-  if [ -e /run/systemd/resolve/stub-resolv.conf ]; then
-    if [ ! -L /etc/resolv.conf ] || [ "$(readlink /etc/resolv.conf || true)" != "/run/systemd/resolve/stub-resolv.conf" ]; then
-      sudo cp /etc/resolv.conf "/etc/resolv.conf.backup.$(date +%s)" 2>/dev/null || true
-      sudo rm -f /etc/resolv.conf
-      sudo ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-    fi
-  fi
-else
-  echo "no systemd. run:"
-  echo "sudo nebula -config /etc/nebula/config.yml"
 fi
 
 echo "done."
